@@ -128,6 +128,129 @@ Object 클래스에 정의되어 있는 메소드를 살펴보자.
 
 이렇게 함으로써 서로 다른 인스턴스일지라도 같은 값을 가지고 있다면 equals로 비교했을때 true를 결과로 얻을 수 있다.
 
+equals 메서드를 재정의할 때는 반드시 Object명세에 따른 [규약](https://docs.oracle.com/javase/7/docs/api/java/lang/Object.html#equals(java.lang.Object))을 지켜야한다. 규약을 확인하면서 equals메서드를 구현한 잘못된 사례를 확인해보자.
+
+- **반사성**(_reflexive_) - x.equals(x) 는 true다.
+
+- **대칭성**(_symmetric_) - x.equals(y) 가 true면, y.equals(x) 도 true 이다.
+
+  ```java
+  /*잘못된 코드 - 대칭성 위배*/
+  public final class CaseInsensitiveString {
+    	private final String s;
+    
+    	public CaseInsensitiveString(String s){
+        	this.s = Objects.requireNonNull(s);
+      }
+    
+    	// 대칭성 위배!
+    	@Override public boolean equals(Object o){
+        	if (o instanceof CaseInsensitiveString)
+            	return s.equalsIgnoreCase(((CaseInsensitiveString) o).s);
+        	if (o instanceof String)	// 한 방향으로만 작동한다.
+            	return s.equalsIgnoreCase((String) o);
+        	return false;
+      }
+    	...
+  }
+  ```
+
+  위 코드는 대칭성을 위배한 케이스이다. 두 객체 ```CaseInsensitiveString cis = new CaseInsensitiveString("polish");``` 와 ```String s = "polish";``` 가 있을때 cis.equals(s) 는 true를 반환한다. 문제는 CaseInsensitiveString의 equals는 일반 String을 알고 있지만 String의 equals는 CaseInsensitiveString의 존재를 모른다는 데 있다. 따라서 s.equals(cis)는 false 를 반환하여, 대칭성을 위반한다.
+
+  이 문제를 해결하려면 CaseInsensitiveString의 equals를 String과도 연동하겠다는 꿈을 버려야 한다.
+
+  ```java
+  /*수정된 코드*/
+  @Override public boolean equals(Object o){
+    	return o instanceof CaseInsensitiveString &&
+        	((CaseInsensitiveString) o).s.equalsIgnoreCase(s);
+  }
+  ```
+
+- **추이성**(_transitive_) - x.equals(y)가 true이고 y.equals(z)가 true 이면, x.equals(z)도 true이다. 간단하지만 자칫하면 어기기 쉽다. 상위 클래스에 없는 새로운 필드를 하위 클래스에 추가하는 상황을 보자.
+
+  ```java
+  public class Point {
+    	private final int x;
+    	private final int y;
+    
+    	public Point(int x, int y){
+        	this.x = x;
+        	this.y = y;
+      }
+    
+    	@Override public boolean equals(Object o){
+        	if (!(o instanceof Point))
+            	return false;
+        	Point p = (Point)o;
+        	return p.x == x && p.y == y;
+      }
+    
+    	...
+  }
+  ```
+
+  이 클래스를 확장하는 클래스를 보자.
+
+  ```java
+  public class ColorPoint extends Point {
+    	private final Color color;
+    
+    	public ColorPoint(int x, int y, Color color){
+        	super(x, y);
+        	this.color = color;
+      }
+    
+    	...
+  }
+  ```
+
+  equals 메서드를 오버라이딩 하지 않는다면 색상 정보는 무시한 채 비교를 수행한다. 비교대상이 또 다른 ColorPoint이고 위치와 색상이 같을 때만 true를 반환하는 equals를 생각해보자.
+
+  ```java
+  /*잘못된 코드 - 대칭성 위배*/
+  @Override public boolean equals(Object o){
+    	if (!(o instanceof ColorPoint))
+        	return false;
+    	return super.equals(o) && ((ColorPoint) o).color == color;
+  }
+  ```
+
+  ```Point p = new Point(1, 2);``` ```ColorPoint cp = new ColorPoint(1, 2, Color.RED);``` 를 비교해보면 p.equals(cp)는 true를, cp.equals(p)는 false를 반환한다. ColorPoint.equals가 Point와 비교할 때는 색상을 무시하도록 하면 해결이 될까?
+
+  ```java
+  /*잘못된 코드 - 추이성 위배*/
+  @Override public boolean equals(Object o){
+    	if (!(o instanceof Point))
+        	return false;
+    
+    	// o가 Point면 색상을 무시하고 비교한다.
+    	if (!(o instanceof ColorPoint))
+        	return o.equals(this);
+    
+    	// o가 ColorPoint면 색상까지 비교한다.
+    	return super.equals(o) && ((ColorPoint) o).color == color;
+  }
+  ```
+
+  위 코드는 대칭성은 지켜주지만 추이성을 깨버린다. ```ColorPoint p1 = new ColorPoint(1, 2, Color.RED);``` ```Point p2 = new Point(1, 2);``` ```ColorPoint p3 = new ColorPoint(1, 2, Color.BLUE);``` 일때 p1.equals(p2)와 p2.equals(cp3)는 true를 반환하는데, p1.equals(p3)가 false로 추이성에 위배된다. 색상까지 고려했기 때문이다.
+
+  **결과적으로 구체 클래스를 확장해 새로운 값을 추가하면서 equals 규약을 만족시킬 방법은 존재하지 않는다.**
+
+- **일관성**(_consistency_) - 두객체가 같다면 영원히 같아야 한다는 뜻이다.
+
+- **null-아님** - o.equals(null)은 당연하게도 false 여야 한다. 실수로 NullPointerException을 던지는 상황도 있어서는 안된다. instanceof 는 첫번째 피연산자가 null이면 false를 반환한다.
+
+위의 5가지 규약을 제외하고 추가적으로 주의할 사항으로
+
+- equals를 재정의할 땐 hashCode 도 반드시 재정의하자.
+- 너무 복잡하게 하려 들지말자.
+- Object 외의 타입을 매개변수로 받는 equals 메서드는 선언하지 말자.
+
+
+
+> **꼭 필요한 경우가 아니면 equals를 재정의하지 말자.** 많은 경우에 Object의 equals가 원하는 비교를 정확히 수행해준다. 재정의해야 할때는 그 클래스의 핵심 필드 모두를 빠짐없이, 다섯가지 규약을 확실히 지켜가며 비교해야 한다.
+
 
 
 ## hashCode()
@@ -281,7 +404,42 @@ String 클래스는 문자열의 내용이 같으면, 동일한 해시코드를 
 
 _동일한 객체는 동일한 메모리 주소를 갖는다는 것을 의미하므로, 동일한 객체는 동일한 해시코드를 가져야 한다._ 그렇기 때문에 _**equals() 메소드를 오버라이드 한다면, hashCode() 메소드도 오버라이드 되어야 한다.**_
 
-참고) https://mangkyu.tistory.com/101
+[**hashCode 명세**](https://docs.oracle.com/javase/7/docs/api/java/lang/Object.html#hashCode()) 를 살펴보면 obj1.equals(obj2) 이 true 이면 hashCode(obj1) == hashCode(obj2) 이여야 하지만 obj1.equals(obj2)가 false 라도 hashCode(obj1) == hashCode(obj2) 일 수도 있다. 단 다른 객체에 대해서는 다른 값을 반환하는편이 성능면에서 좋다는 것을 인지해야 한다.
+
+hashCode 재정의를 잘못했을때 문제가 되는 부분은 equals를 재정의 하여 논리적으로 같은 객체에 대해서 true를 반환할수 있다. 하지만 Object의 기본 hashCode 메서드는 둘이 다르다고 판단하여 다른값을 반환한다.
+
+equals를 재정의한 클래스를 예제로 살펴보자
+
+```java
+public class Employee {
+  	private Integer id;
+  	private String firstName;
+  	private String lastName;
+  	private String department;
+  
+  	// Setter & Gettter
+  
+  	public boolean equals(Object o){
+      	if (o == null)
+          	return false;
+      	if (o == this)
+          	return true;
+      	if (getClass() != o.getClass())
+          	return false;
+      
+      	Employee e = (Employee) o;
+      	return (this.getId() == e.getId());
+    }
+}
+```
+
+equals 비교는 해결된 것처럼 보인다. 하지만 Employee를 HashSet 과 같은 자료구조에 저장하려고 하면 문제가 생기게 된다.
+
+HashTable이나 HashSet, HashMap과 같은 자료구조는 자료를 저장하기 위한 위치를 선택하기 위해 hashCode를 이용한다. 고유값인 Id를 일치시킨 두 객체를 자료구조에 넣을때 각 개체는 다른 해시값을 반환할 것이고, 서로 다른 위치에 저장될 것이다.
+
+#### hashCode 작성요령
+
+
 
 
 
@@ -393,7 +551,7 @@ Object 클래스에 정의된 clone()은 _인스턴스변수의 값만을 복사
 
 예를들어 배열의 경우 복제된 인스턴스도 같은 배열의 주소를 갖기 때문에 복제된 인스턴스의 작업이 원래의 인스턴스에 영향을 미치게 된다. 그렇기 때문에 오버라이딩해서 clone 메서드를 구현하여야 한다.
 
-clone() 을 사용하기 위해서는 복제할 클래스가 ```Cloneable 인터페이스```를 구현해야하고, 오버라이드 된 clone() 의 ```접근 제어자를 public``` 으로 변경한다. 그래야 상속관계가 없는 다른 클래스에서 clone()을 호출할 수 있다.
+clone() 을 사용하기 위해서는 복제할 클래스가 **```Cloneable 인터페이스```**를 구현해야하고, 오버라이드 된 clone() 의 **```접근 제어자를 public```** 으로 변경한다. 그래야 상속관계가 없는 다른 클래스에서 clone()을 호출할 수 있다.
 
 ```java
 package java.lang;
@@ -435,6 +593,86 @@ Cloneable 인터페이스를 구현하게 하는 이유는 인스턴스의 데�
 
 clone()은 단순히 객체에 저장된 값을 그대로 복제할 뿐, 객체가 참조하고 있는 객체까지 복제하지는 않는다.
 
-배열인 경우를 예로들면 기본형 배열인 경우에는 아무런 문제가 없지만, 객체배열을 clone()으로 복제하는 경우에는 **원본과 복제본이 같은 객체를 공유**하므로 완전한 복제라고 보기 어렵다. 이러한 복제를 ```얕은복사(shallow copy)```라고 한다.
+배열인 경우를 예로들면 기본형 배열인 경우에는 아무런 문제가 없지만, 객체배열을 clone()으로 복제하는 경우에는 **원본과 복제본이 같은 객체를 공유**하므로 완전한 복제라고 보기 어렵다. 이러한 복제를 **```얕은복사(shallow copy)```**라고 한다.
 
-반면에 **원본이 참조하고 있는 객체까지 복제**하는 것을 ```깊은복사(deep copy)```라고 하며, 원본의 변경이 복사본에 영향을 미치지 않는다.
+반면에 **원본이 참조하고 있는 객체까지 복제**하는 것을 **```깊은복사(deep copy)```**라고 하며, 원본의 변경이 복사본에 영향을 미치지 않는다.
+
+> #### 예제 클래스
+>
+> ```java
+> public class Stack{
+> 		private Object[] elements;
+>   	private int size = 0;
+>   	private static final int DEFAULT_INITIAL_CAPACITY = 16;
+>   
+>   	...
+> }
+> ```
+>
+> #### ex. 가변상태를 참조하는 클래스용 재귀적 clone
+>
+> ```java
+> @Override public Stack clone() {
+>   	try{
+>       	Stack result = (Stack) super.clone();
+>       	result.elements = elements.clone();
+>       	return result;
+>     } catch (CloneNotSupportedException e) {
+>       	throw new AssertionError();
+>     }
+> }
+> ```
+>
+> #### ex. 복잡한 가변상태를 갖는 클래스용 재귀적 clone
+>
+> ```java
+> public class HashTable implements Cloneable {
+>   	private Entry[] buckets = ...;
+>   	
+>   	private static class Entry{
+>       	final Object key;
+>       	Object value;
+>       	Entry next;
+>       	
+>       	Entry(Object key, Object value, Entry next){
+>           	this.key = key;
+>           	this.value = value;
+>           	this. next = next;
+>         }
+>       
+>       	//이 엔트리가 가리키는 연결 리스트를 재귀적으로 복사
+>       	Entry deepCopy() {
+>           	return new Entry(key, value, next == null? null : next.deepCopy());
+>         }
+>     }
+>   	
+>   	@Override public HashTable clone() {
+>       	try {
+>           	HashTable result = (HashTable) super.clone();
+>           	result.buckets = new Entry[buckets.length];
+>           	for (int i = 0; i < buckets.length; i++)
+>               	if (buckets[i] != null)
+>                   	result.buckets[i] = buckets[i].deepCopy();
+>           	return result;
+>         } catch (CloneNotSupportedException e) {
+>           	throw new AssertionError();
+>         }
+>     }
+>   	...
+> }
+> ```
+>
+> 이 방법은 간단하며, 버킷이 너무 길지 않다면 잘 작동한다. 하지만 리스트의 원소 수만큼 스택 프레임을 소비하며, 리스트가 길면 스택 오버플로를 일으킬 위험이 있어 그다지 좋지 않다.
+>
+> #### ex. 엔트리 자신이 가리키는 연결 리스트를 반복적으로 복사
+>
+> ```java
+> Entry deepCopy() {
+>   	Entry result = new Entry(key, value, next);
+>   	for (Entry p = result; p.next != null; p = p.next)
+>       	p.next = new Entry(p.next.key, p.next.value, p.next.next);
+>   	return result;
+> }
+> ```
+>
+> 
